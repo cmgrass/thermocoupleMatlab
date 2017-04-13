@@ -1,5 +1,5 @@
-function [tuyTs] = logData(mySerialPort, samples)
-%LOGDATA Summary of this function goes here
+function [tuyTs] = pidControl(mySerialPort,setPoint,samples)
+%PIDCONTROL Summary of this function goes here
 %   Detailed explanation goes here
 
     %% Flush existing data on buffer
@@ -14,38 +14,20 @@ function [tuyTs] = logData(mySerialPort, samples)
     end
     disp('Started');
     
-    %% Log data
-    % Initialize result matrix
+    %% Controller
+    % Initialize system
     tuyTs = zeros(5,samples);   % (1: t, 2: u, 3: yA, 4: yB, 5: Ts)
     relayPwm = 0;
+    maxTemp = 350;
+    minTemp = 60;
+    tempRange = maxTemp - minTemp;
+    setPercent = (setPoint-minTemp)/tempRange
+    integral = 0;
+    u = 0;
     
     tic    % start clock
     for k = 1:samples   % Loop through the serial buffer
-        
-        % Send Relay PWM command
-        if (k == round(samples*0.01))
-            fprintf(mySerialPort, '%s', num2str(60));
-            relayPwm = 60;
-        end
-        
-        % Send Relay PWM command
-        if (k == round(samples*0.4))
-            fprintf(mySerialPort, '%s', num2str(255));
-            relayPwm = 255;
-        end
-               
-        % Send Relay PWM command
-        if (k == round(samples*.25))
-            fprintf(mySerialPort, '%s', num2str(100));
-            relayPwm = 100;
-        end
-        
-        % Send Relay PWM command
-        if (k == round(samples*0.75))
-            fprintf(mySerialPort, '%s', num2str(0));
-            relayPwm = 0;
-        end
-        
+                
         % Read through one chunk of protocol
         % initialize
         serialInput = 0.0;
@@ -66,7 +48,40 @@ function [tuyTs] = logData(mySerialPort, samples)
         while serialInput ~= 9999
             serialInput = fscanf(mySerialPort, '%u');
         end
-
+        
+        % PI compensation
+        Kp = 11.6; Z = 0.005; Ki = Z*Kp;
+        e = setPercent-((tuyTs(4,k)-minTemp)/tempRange)
+        if k > 1
+            integral = integral + e*tuyTs(5,k-1);
+        else
+            integral = integral + e*tuyTs(5,1);
+        end
+        
+        u = (round((Kp*e + Ki*integral)*255));
+        
+        if (u > 255)
+            u = 255;
+            if k > 1
+                integral = integral - e*tuyTs(5,k-1);
+            else
+                integral = integral - e*tuyTs(5,1);
+            end
+        elseif (u < 0)
+            u = 0;
+            if k > 1
+                integral = integral - e*tuyTs(5,k-1);
+            else
+                integral = integral - e*tuyTs(5,1);
+            end
+        end
+        
+        u = u
+        
+        % Send Relay PWM command
+        fprintf(mySerialPort, '%s', num2str(u));
+        relayPwm = u;
+        
         % log time information for sample set
         tuyTs(1,k) = toc;
         if k > 1
@@ -105,5 +120,6 @@ function [tuyTs] = logData(mySerialPort, samples)
     title('Response `y` of System: Temperature `B` Vs. Time');
     xlabel('Time (seconds)');
     ylabel('System Temperature `B` (Farenheit)');
+
 end
 
